@@ -347,11 +347,9 @@ struct NotificationRow: View {
                         }
 
                         if let commit = notification.commit, !commit.text.isEmpty {
-                            Text(commit.text)
-                                .font(DS.Fonts.body)
-                                .foregroundStyle(DS.Colors.inkMuted)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
+                            // Notifications carry the same rendered segments as commit rows. Reuse the renderer so
+                            // fenced and inline code, links, and mentions don't fall back to their Markdown source.
+                            CommitBodyView(commit: commit, foldable: false, lineLimit: 2)
                         }
 
                         if notification.type == .followed, !notification.isGroup, let actor = notification.actor, actor.isFollowed != true {
