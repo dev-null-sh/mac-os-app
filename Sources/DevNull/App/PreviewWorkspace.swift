@@ -439,19 +439,28 @@
                 data["followers_count"] = 1204 + handle.count * 31
                 data["following_count"] = 188 + handle.count
                 let pinned = handle == "you" ? pinnedId.flatMap(full) : own.last.flatMap(full)
-                return (200, [
+                let buckets: [[String: Any]] = (0 ..< 371).map { day in
+                    let date = Date(timeIntervalSinceNow: -Double(370 - day) * 86400).formatted(.iso8601.year().month().day())
+                    let count = (day * 7 + handle.count) % 11 < 6 ? 0 : (day * 13 + handle.count) % 7
+                    return ["date": date, "count": count]
+                }
+                let badges: [[String: Any]] = [
+                    ["id": "init", "name": "init", "description": "Made a first commit.", "icon": NSNull(), "unlocked": true, "progress": 1, "target": 1],
+                    ["id": "grep", "name": "grep", "description": "Found something worth starring.", "icon": NSNull(), "unlocked": true, "progress": 10, "target": 10],
+                    ["id": "cron", "name": "cron", "description": "Committed seven days in a row.", "icon": NSNull(), "unlocked": true, "progress": 7, "target": 7],
+                    ["id": "fsck", "name": "fsck", "description": "Kept a streak through a whole month.", "icon": NSNull(), "unlocked": false, "progress": 12, "target": 30],
+                ]
+                let activity: [String: Any] = ["scale": "year", "buckets": buckets]
+                let achievements: [String: Any] = ["level": 7, "rank": "sysadmin", "xp": 4210, "badges": badges]
+                let body: [String: Any] = [
                     "data": data, "is_following": following.contains(handle), "follows_you": handle.count % 2 == 0, "is_muting": muted.contains(handle),
                     "pasteis_received": 7,
-                    "activity": ["scale": "year", "buckets": (0 ..< 371).map { day in ["date": Date(timeIntervalSinceNow: -Double(370 - day) * 86400).formatted(.iso8601.year().month().day()), "count": (day * 7 + handle.count) % 11 < 6 ? 0 : (day * 13 + handle.count) % 7] }],
+                    "activity": activity,
                     "streaks": ["longest": 41, "current": 6],
-                    "achievements": ["level": 7, "rank": "sysadmin", "xp": 4210, "badges": [
-                        ["id": "init", "name": "init", "description": "Made a first commit.", "icon": NSNull(), "unlocked": true, "progress": 1, "target": 1],
-                        ["id": "grep", "name": "grep", "description": "Found something worth starring.", "icon": NSNull(), "unlocked": true, "progress": 10, "target": 10],
-                        ["id": "cron", "name": "cron", "description": "Committed seven days in a row.", "icon": NSNull(), "unlocked": true, "progress": 7, "target": 7],
-                        ["id": "fsck", "name": "fsck", "description": "Kept a streak through a whole month.", "icon": NSNull(), "unlocked": false, "progress": 12, "target": 30],
-                    ]],
+                    "achievements": achievements,
                     "pinned_commit": nullable(pinned),
-                ])
+                ]
+                return (200, body)
             case ("GET", "commits"):
                 let ids = (query["replies"] == "1" ? Array(commits.keys).filter { commits[$0]?["parent_id"] is String } : timeline)
                     .filter { (commits[$0]?["author"] as? [String: Any])?["handle"] as? String == handle && visible($0) }
