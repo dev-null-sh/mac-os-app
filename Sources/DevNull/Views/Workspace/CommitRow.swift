@@ -279,6 +279,8 @@ struct CommitRow: View {
                 .fixedSize()
             }
         }
+        // Ends where the body and action row end, so the hash doesn't drift to the far edge on wide windows.
+        .frame(maxWidth: DS.Metrics.bodyIndent + DS.Metrics.readingMeasure)
     }
 
     private func openProfile() {
