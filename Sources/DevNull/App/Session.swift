@@ -87,8 +87,9 @@ final class Session {
             components.queryItems = [
                 URLQueryItem(name: "fingerprint", value: key.fingerprint),
                 URLQueryItem(name: "device_name", value: String((Host.current().localizedName ?? "Mac").prefix(100))),
-                // So Settings → Devices can tell this app from others on the same Mac.
+                // So Settings → Devices can tell this app from others on the same Mac. The id stays when the name changes.
                 URLQueryItem(name: "app_name", value: "/dev/null for Mac"),
+                URLQueryItem(name: "app_id", value: "macos:" + (Bundle.main.bundleIdentifier ?? "sh.dev-null.mac")),
                 URLQueryItem(name: "code_challenge", value: challenge),
                 URLQueryItem(name: "code_challenge_method", value: "S256"),
                 URLQueryItem(name: "state", value: state),
