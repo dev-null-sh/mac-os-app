@@ -234,6 +234,10 @@ struct Composer: View {
             .buttonStyle(IconButtonStyle(size: Self.iconSize))
             .help(pingLabel)
             .accessibilityLabel(pingLabel)
+
+            if session.user?.remotes != nil {
+                CallButton(thread: thread)
+            }
         }
     }
 

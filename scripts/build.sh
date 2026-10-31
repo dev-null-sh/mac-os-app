@@ -63,7 +63,7 @@ swift build "${SWIFT_FLAGS[@]}"
 
 # Where SwiftPM put the build depends on the toolchain's build system, so ask it rather than guess.
 cp "$(swift build "${SWIFT_FLAGS[@]}" --show-bin-path)/DevNull" "$APP/Contents/MacOS/DevNull"
-cp "$ROOT/Sources/DevNull/Resources/emoji-shortcodes.json" "$ROOT/Sources/DevNull/Resources/emoji-categories.json" "$ROOT/Sources/DevNull/Resources/remote.mp3" "$ROOT/Sources/DevNull/Resources/ping.mp3" "$APP/Contents/Resources/"
+cp "$ROOT/Sources/DevNull/Resources/emoji-shortcodes.json" "$ROOT/Sources/DevNull/Resources/emoji-categories.json" "$ROOT/Sources/DevNull/Resources/remote.mp3" "$ROOT/Sources/DevNull/Resources/ping.mp3" "$ROOT/Sources/DevNull/Resources/ring.mp3" "$ROOT/Sources/DevNull/Resources/ringback.mp3" "$ROOT/Sources/DevNull/Resources/hangup.mp3" "$APP/Contents/Resources/"
 
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
@@ -101,11 +101,13 @@ done
 
 codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "com.apple.security.device.audio-input" \
     || fail "the microphone entitlement is missing, so voice notes can't record"
+codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "com.apple.security.device.camera" \
+    || fail "the camera entitlement is missing, so calls can't turn the camera on"
 
 [[ "$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")" == "$BUILD_NUMBER" ]] || fail "the build number wasn't stamped"
 [[ "$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")" == "sh.dev-null.mac" ]] || fail "the bundle identifier changed"
 
-for resource in emoji-shortcodes.json emoji-categories.json remote.mp3 ping.mp3 AppIcon.icns Assets.car en.lproj/InfoPlist.strings; do
+for resource in emoji-shortcodes.json emoji-categories.json remote.mp3 ping.mp3 ring.mp3 ringback.mp3 hangup.mp3 AppIcon.icns Assets.car en.lproj/InfoPlist.strings; do
     [[ -s "$APP/Contents/Resources/$resource" ]] || fail "$resource is missing from the app"
 done
 

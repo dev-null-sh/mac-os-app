@@ -35,6 +35,8 @@ struct User: Codable, Hashable, Identifiable {
     let lane: Lane?
     let isFollowed: Bool?
     let followsYou: Bool?
+    /// The stream they're on until it runs out, so a list can mark who is live without asking for each profile.
+    var live: LiveStream? = nil
 
     var displayName: String {
         guard let name, !name.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -52,6 +54,17 @@ struct User: Codable, Hashable, Identifiable {
     var isBot: Bool {
         ["tom", "world", "devnull-world"].contains(handle.lowercased())
     }
+}
+
+/// A YouTube or Twitch stream someone said they're live on, until `endsAt`.
+struct LiveStream: Codable, Hashable {
+    let platform: String
+    let url: String
+    let thumbnailUrl: String?
+    let endsAt: Date
+
+    var isOn: Bool { endsAt > .now }
+    var platformName: String { platform == "twitch" ? "Twitch" : "YouTube" }
 }
 
 struct RemotesSettings: Codable, Hashable {
@@ -84,9 +97,10 @@ struct CurrentUser: Codable, Hashable {
     var preferredLane: Lane? = nil
     var automaticLane: Int? = nil
     var githubSyncedAt: Date? = nil
+    var live: LiveStream? = nil
 
     var asUser: User {
-        User(id: id, handle: handle, name: name, avatarUrl: avatarUrl, bio: bio, htmlUrl: htmlUrl, lane: lane, isFollowed: nil, followsYou: nil)
+        User(id: id, handle: handle, name: name, avatarUrl: avatarUrl, bio: bio, htmlUrl: htmlUrl, lane: lane, isFollowed: nil, followsYou: nil, live: live)
     }
 }
 
@@ -160,12 +174,16 @@ struct BodySegment: Codable, Hashable {
     let code: String?
     let language: String?
     let html: String?
+    /// The name a code block was given after its language, as in ```php title="app.php".
+    var filename: String? = nil
 }
 
 struct Mention: Codable, Hashable {
     let handle: String
     let offset: Int
     let length: Int
+    /// "user" or "organization".
+    var kind: String? = nil
 }
 
 struct ReplyGhost: Codable, Hashable {

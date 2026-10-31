@@ -56,7 +56,7 @@ enum CommitText {
             switch segment.type {
             case "block":
                 flush()
-                blocks.append(.code(language: segment.language, code: MessageText.plain(fromHTML: segment.html ?? segment.code ?? "")))
+                blocks.append(.code(language: segment.filename ?? segment.language, code: MessageText.plain(fromHTML: segment.html ?? segment.code ?? "")))
             case "code":
                 var code = AttributedString(segment.code ?? "")
                 code.font = .system(size: size - 1, design: .monospaced)
@@ -72,8 +72,9 @@ enum CommitText {
         return blocks
     }
 
-    /// Prose with URLs, `@handle` mentions and `owner/repo#123` references made into links.
-    static func prose(_ text: String, size: CGFloat) -> AttributedString {
+    /// Prose with URLs, `@handle` mentions and `owner/repo#123` references made into links. A bio passes the handles
+    /// on /dev/null it mentions, lowercased, and every other mention goes to GitHub, as the web's bios link them.
+    static func prose(_ text: String, size: CGFloat, profiles: [String: String]? = nil) -> AttributedString {
         let text = MessageText.emojify(text)
         var result = AttributedString(text)
         let range = NSRange(text.startIndex..., in: text)
@@ -102,7 +103,13 @@ enum CommitText {
         for match in mention?.matches(in: text, range: range) ?? [] {
             guard let handle = Range(match.range(at: 1), in: text) else { continue }
 
-            link(match.range, to: WorkspaceLink.profile(String(text[handle])))
+            let mentioned = String(text[handle])
+
+            if let profiles, profiles[mentioned.lowercased()] == nil {
+                link(match.range, to: URL(string: "https://github.com/\(mentioned)")!)
+            } else {
+                link(match.range, to: WorkspaceLink.profile(profiles?[mentioned.lowercased()] ?? mentioned))
+            }
         }
 
         return result
@@ -121,8 +128,25 @@ enum WorkspaceLink {
         URL(string: "\(scheme)://commit/\(id)")!
     }
 
+    /// A /dev/null address the app can show itself: a commit's permalink, as one shared in a remote, or a profile.
+    static func inApp(_ url: URL) -> URL? {
+        guard url.scheme == "https", url.host() == APIClient.baseURL.host() else { return nil }
+
+        let parts = url.pathComponents.filter { $0 != "/" }
+
+        guard let handle = parts.first, handle.hasPrefix("@"), handle.count > 1 else { return nil }
+
+        switch parts.count {
+        case 1: return profile(String(handle.dropFirst()))
+        case 3 where parts[1] == "commits" && UUID(uuidString: parts[2]) != nil: return commit(parts[2])
+        default: return nil
+        }
+    }
+
     /// Opens a workspace link in the frontmost window's navigation, and leaves every other URL to the browser.
     @MainActor static func handle(_ url: URL, navigation: Navigation, openProfile: (String) -> Void) -> OpenURLAction.Result {
+        let url = inApp(url) ?? url
+
         guard url.scheme == scheme, let host = url.host() else { return .systemAction }
 
         let value = url.lastPathComponent
@@ -174,7 +198,8 @@ struct CommitBodyView: View {
     }
 }
 
-/// A fenced code block: mono on `wash`, scrolling sideways, with a copy button on hover that copies the whole block.
+/// A fenced code block: mono on `wash` under its filename or language, scrolling sideways, with a copy button on hover
+/// that copies the whole block.
 struct CodeBlock: View {
     let language: String?
     let code: String
@@ -183,12 +208,24 @@ struct CodeBlock: View {
     @State private var copied = false
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Text(code)
-                .font(DS.Fonts.code)
-                .foregroundStyle(DS.Colors.ink)
-                .fixedSize()
-                .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+        VStack(alignment: .leading, spacing: 0) {
+            if let language {
+                Text(language)
+                    .font(DS.Fonts.monoCaption)
+                    .foregroundStyle(DS.Colors.inkMuted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(language)
+                    .padding(EdgeInsets(top: 8, leading: 12, bottom: 0, trailing: 36))
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(DS.Fonts.code)
+                    .foregroundStyle(DS.Colors.ink)
+                    .fixedSize()
+                    .padding(EdgeInsets(top: language == nil ? 10 : 6, leading: 12, bottom: 10, trailing: 12))
+            }
         }
         .frame(maxWidth: DS.Metrics.readingMeasure, alignment: .leading)
         .background(DS.Colors.wash, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))

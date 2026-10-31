@@ -105,7 +105,7 @@ struct Commit: Codable, Hashable, Identifiable {
 
     /// The web's address of the commit, for Copy Link and Open on the Web.
     var webURL: URL {
-        htmlUrl.flatMap(URL.init(string:)) ?? APIClient.baseURL.appending(path: "@\(author?.handle ?? "")/\(id)")
+        htmlUrl.flatMap(URL.init(string:)) ?? APIClient.baseURL.appending(path: "@\(author?.handle ?? "")/commits/\(id)")
     }
 
     /// The people who replied last, newest first, at most three, for the action row.
@@ -147,6 +147,8 @@ struct LogPage: Decodable {
 struct CommitPage: Decodable {
     let data: Commit
     let ancestors: [Commit]?
+    /// Who a reply can go to besides the author: the people the commit's thread already addresses.
+    var replyParticipants: [User]? = nil
 }
 
 struct Translation: Codable, Hashable {
@@ -214,9 +216,11 @@ struct Profile: Decodable {
     let streaks: Streaks?
     let achievements: Achievements?
     var pinnedCommit: Commit?
+    /// The handles the bio mentions that are on /dev/null, lowercased, so the rest link to GitHub.
+    let bioProfiles: [String: String]?
 
     private enum CodingKeys: String, CodingKey {
-        case data, isFollowing, followsYou, isMuting, activity, streaks, achievements, pinnedCommit
+        case data, isFollowing, followsYou, isMuting, activity, streaks, achievements, pinnedCommit, bioProfiles
     }
 
     init(from decoder: Decoder) throws {
@@ -230,10 +234,12 @@ struct Profile: Decodable {
         streaks = try container.decodeIfPresent(Streaks.self, forKey: .streaks)
         achievements = try container.decodeIfPresent(Achievements.self, forKey: .achievements)
         pinnedCommit = try container.decodeIfPresent(Commit.self, forKey: .pinnedCommit)
+        bioProfiles = try? container.decodeIfPresent([String: String].self, forKey: .bioProfiles)
     }
 }
 
-/// A GitHub organization at an "@handle" no user has, mirrored from GitHub, as its page on the web shows it.
+/// A GitHub organization at an "@handle" no user has, mirrored from GitHub, as its page on the web shows it. Its page
+/// also says who follows it, its admins and the color they chose; a list says whether the user follows each one.
 struct Organization: Decodable, Hashable, Identifiable {
     let handle: String
     let name: String
@@ -243,9 +249,21 @@ struct Organization: Decodable, Hashable, Identifiable {
     let website: String?
     let githubUrl: String
     let htmlUrl: String
+    var isFollowed: Bool? = nil
+    var followersCount: Int? = nil
+    var lane: Lane? = nil
+    var admins: [User]? = nil
 
     var id: String { handle }
     var avatarURL: URL? { avatarUrl.flatMap(URL.init(string:)) }
+}
+
+/// GET organizations/{handle}: the page, with what only a signed request gets beside it.
+struct OrganizationPage: Decodable {
+    var data: Organization
+    var isFollowing: Bool? = nil
+    var canClaim: Bool? = nil
+    var settingsUrl: String? = nil
 }
 
 // MARK: - Notifications
@@ -259,6 +277,7 @@ enum NotificationKind: String, Codable, Hashable {
     case quoted
     case starred
     case leveledUp = "leveled_up"
+    case firstCommit = "first_commit"
     case unknown
 
     init(from decoder: Decoder) throws {
@@ -272,6 +291,7 @@ enum NotificationKind: String, Codable, Hashable {
         case .quoted: "arrow.2.squarepath"
         case .starred: "star"
         case .mentioned: "at"
+        case .firstCommit: "arrow.triangle.branch"
         case .approved: "checkmark"
         case .rejected: "xmark"
         case .leveledUp, .unknown: "chevron.up.2"

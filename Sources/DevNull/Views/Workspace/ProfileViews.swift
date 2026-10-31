@@ -28,7 +28,7 @@ struct ProfileView: View {
     var body: some View {
         Group {
             if let organization = store.organization {
-                OrganizationView(organization: organization)
+                OrganizationView(page: organization, store: store)
             } else if let profile = store.profile {
                 CommitList(ids: store.commits[tab] ?? [], isLoading: store.commits[tab] == nil, hasMore: tab != .starred && store.cursors[tab] != nil) {
                     await store.loadTab(tab, more: true)
@@ -84,8 +84,13 @@ struct ProfileHeader: View {
     let profile: Profile
     let isOwn: Bool
 
+    @State private var showsGoLive = false
+    @State private var isEndingStream = false
+
     private var user: User { profile.user }
     private var profileURL: URL { APIClient.baseURL.appending(path: "@\(user.handle)") }
+    /// Your own stream comes from the signed-in user, which going live updates right away.
+    private var liveStream: LiveStream? { isOwn ? workspace.session.user?.asUser.liveStream : user.liveStream }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
@@ -109,6 +114,9 @@ struct ProfileHeader: View {
                         .font(DS.Fonts.monoHandle)
                         .foregroundStyle(DS.Colors.inkMuted)
                         .textSelection(.enabled)
+                    if let stream = liveStream {
+                        LiveBadge(stream: stream)
+                    }
                     if profile.followsYou, !isOwn {
                         StatusLabel(text: "Follows you")
                     }
@@ -119,7 +127,7 @@ struct ProfileHeader: View {
             }
 
             if let bio = user.bio, !bio.isEmpty {
-                Text(CommitText.prose(bio, size: 14))
+                Text(CommitText.prose(bio, size: 14, profiles: profile.bioProfiles))
                     .font(DS.Fonts.commitBody)
                     .foregroundStyle(DS.Colors.ink)
                     .textSelection(.enabled)
@@ -159,6 +167,23 @@ struct ProfileHeader: View {
     private var actions: some View {
         HStack(spacing: DS.Spacing.s) {
             if isOwn {
+                if liveStream != nil {
+                    Button(isEndingStream ? "Ending…" : "End Stream") {
+                        isEndingStream = true
+                        Task {
+                            do { try await workspace.setLive(url: nil) } catch { workspace.toasts.fatal(error) }
+                            isEndingStream = false
+                        }
+                    }
+                    .buttonStyle(.dsOutline)
+                    .disabled(isEndingStream)
+                } else {
+                    Button("Go Live") { showsGoLive = true }
+                        .buttonStyle(.dsOutline)
+                        .help("Share your YouTube or Twitch stream on your avatar")
+                        .sheet(isPresented: $showsGoLive) { GoLiveSheet() }
+                }
+
                 Button("Edit on GitHub") { openURL(URL(string: "https://github.com/settings/profile")!) }
                     .buttonStyle(.dsOutline)
                     .help("Your name, bio and picture come from GitHub")
@@ -230,81 +255,156 @@ struct ProfileHeader: View {
     }
 }
 
-/// A GitHub organization's page: the header mirrored from GitHub, and nothing to read yet, as on the web.
+/// A GitHub organization's page, as on the web: the header mirrored from GitHub with its color, followers and admins,
+/// Claim while nobody has, Settings for its admins and members (on the web), then the commits mentioning it.
 private struct OrganizationView: View {
-    @Environment(Workspace.self) private var workspace
-    @Environment(\.openURL) private var openURL
+    /// The page's one tab, as on the web.
+    enum Tab: Identifiable {
+        case mentions
 
-    let organization: Organization
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: DS.Spacing.l) {
-                    HStack(alignment: .top) {
-                        OrganizationAvatar(organization: organization, size: 80)
-
-                        Spacer()
-
-                        actions
-                    }
-
-                    VStack(alignment: .leading, spacing: DS.Spacing.xs) {
-                        Text(organization.name)
-                            .font(DS.Fonts.profileName)
-                            .foregroundStyle(DS.Colors.ink)
-                            .textSelection(.enabled)
-                        HStack(spacing: DS.Spacing.s) {
-                            Text("@\(organization.handle)")
-                                .font(DS.Fonts.monoHandle)
-                                .foregroundStyle(DS.Colors.inkMuted)
-                                .textSelection(.enabled)
-                            StatusLabel(text: "Organization")
-                        }
-                    }
-
-                    if let bio = organization.bio, !bio.isEmpty {
-                        Text(CommitText.prose(bio, size: 14))
-                            .font(DS.Fonts.commitBody)
-                            .foregroundStyle(DS.Colors.ink)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: DS.Metrics.readingMeasure, alignment: .leading)
-                    }
-
-                    metadata
-                }
-                .padding(.horizontal, DS.Metrics.railWidth + DS.Spacing.xs)
-                .padding(.vertical, DS.Spacing.xl)
-
-                DS.Colors.hairline.frame(height: 1)
-
-                EmptyState(fatal: "$ git log --grep=@\(organization.handle)", message: "Organization pages are new. Soon you'll be able to follow @\(organization.handle) and read what the community commits about it, right here.")
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, DS.Spacing.xl)
-            }
-        }
-        .background(DS.Colors.surface)
+        var id: Self { self }
     }
 
-    private var actions: some View {
-        Menu {
-            Button("Copy Profile Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(organization.htmlUrl, forType: .string)
-                workspace.toasts.show("Copied link to @\(organization.handle)")
+    @Environment(Workspace.self) private var workspace
+    @Environment(\.openURL) private var openURL
+    @Environment(\.workspaceActions) private var actions
+
+    let page: OrganizationPage
+    let store: ProfileStore
+
+    @State private var isClaiming = false
+
+    private var organization: Organization { page.data }
+    private var lane: Color { LaneColor.of(lane: organization.lane) }
+
+    var body: some View {
+        CommitList(ids: store.mentions ?? [], isLoading: store.mentions == nil, hasMore: store.mentionsCursor != nil) {
+            await store.loadMentions(more: true)
+        } header: {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                    .padding(.horizontal, DS.Metrics.railWidth + DS.Spacing.xs)
+                    .padding(.vertical, DS.Spacing.xl)
+
+                PageTabs(tabs: [Tab.mentions], selection: .constant(.mentions)) { _ in "Mentions" }
             }
-            if let url = URL(string: organization.htmlUrl) {
-                Button("Open on the Web") { openURL(url) }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .frame(width: DS.Metrics.controlHeight, height: DS.Metrics.controlHeight)
+        } empty: {
+            EmptyState(fatal: "$ git log --grep=@\(organization.handle)", message: "Nobody has mentioned @\(organization.handle) yet. Commits that do land here.")
         }
-        .menuStyle(.button)
-        .buttonStyle(DSButtonStyle(kind: .outline))
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel("More")
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            HStack(alignment: .top) {
+                OrganizationAvatar(organization: organization, size: 80)
+                    .padding(4)
+                    .overlay(RoundedRectangle(cornerRadius: DS.Radius.lg + 4, style: .continuous).strokeBorder(lane, lineWidth: 2))
+
+                Spacer()
+
+                buttons
+            }
+
+            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                Text(organization.name)
+                    .font(DS.Fonts.profileName)
+                    .foregroundStyle(DS.Colors.ink)
+                    .textSelection(.enabled)
+                HStack(spacing: DS.Spacing.s) {
+                    Circle().fill(lane).frame(width: 7, height: 7).accessibilityHidden(true)
+                    Text("@\(organization.handle)")
+                        .font(DS.Fonts.monoHandle)
+                        .foregroundStyle(DS.Colors.inkMuted)
+                        .textSelection(.enabled)
+                    StatusLabel(text: "Organization")
+                }
+            }
+
+            if let bio = organization.bio, !bio.isEmpty {
+                Text(CommitText.prose(bio, size: 14))
+                    .font(DS.Fonts.commitBody)
+                    .foregroundStyle(DS.Colors.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: DS.Metrics.readingMeasure, alignment: .leading)
+            }
+
+            metadata
+
+            if let count = organization.followersCount {
+                HStack(spacing: DS.Spacing.xs) {
+                    Text(count.formatted(.number.locale(Locale(identifier: "en_US"))))
+                        .font(DS.Fonts.monoCaption.weight(.semibold))
+                        .foregroundStyle(DS.Colors.ink)
+                    Text(count == 1 ? "follower" : "followers")
+                        .font(DS.Fonts.caption)
+                        .foregroundStyle(DS.Colors.inkMuted)
+                }
+            }
+
+            if let admins = organization.admins, !admins.isEmpty {
+                HStack(spacing: DS.Spacing.m) {
+                    Text(admins.count == 1 ? "Admin" : "Admins")
+                        .font(DS.Fonts.caption)
+                        .foregroundStyle(DS.Colors.inkMuted)
+                    ForEach(admins) { admin in
+                        Button { actions?.openProfile(admin.handle) } label: {
+                            HStack(spacing: DS.Spacing.xs) {
+                                Avatar(user: admin, size: 20)
+                                Text("@\(admin.handle)")
+                                    .font(DS.Fonts.monoHandle)
+                                    .foregroundStyle(DS.Colors.primary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help(admin.displayName)
+                    }
+                }
+            }
+        }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: DS.Spacing.s) {
+            if page.canClaim == true {
+                Button(isClaiming ? "Claiming…" : "Claim") {
+                    isClaiming = true
+                    Task {
+                        await store.claim()
+                        isClaiming = false
+                    }
+                }
+                .buttonStyle(.dsOutline)
+                .disabled(isClaiming)
+                .help("GitHub confirms you belong to @\(organization.handle), and you become its first admin")
+            }
+
+            if let settings = page.settingsUrl.flatMap(URL.init(string:)) {
+                Button("Settings") { openURL(settings) }
+                    .buttonStyle(.dsOutline)
+                    .help("Members and color are managed on the web")
+            }
+
+            OrganizationFollowButton(organization: organization.with(isFollowed: page.isFollowing))
+
+            Menu {
+                Button("Copy Profile Link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(organization.htmlUrl, forType: .string)
+                    workspace.toasts.show("Copied link to @\(organization.handle)")
+                }
+                if let url = URL(string: organization.htmlUrl) {
+                    Button("Open on the Web") { openURL(url) }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: DS.Metrics.controlHeight, height: DS.Metrics.controlHeight)
+            }
+            .menuStyle(.button)
+            .buttonStyle(DSButtonStyle(kind: .outline))
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("More")
+        }
     }
 
     private var metadata: some View {
@@ -338,6 +438,98 @@ private struct OrganizationView: View {
                 .foregroundStyle(tint)
                 .lineLimit(1)
         }
+    }
+}
+
+/// Follow or Following for an organization, as FollowButton is for a person.
+struct OrganizationFollowButton: View {
+    @Environment(Workspace.self) private var workspace
+    let organization: Organization
+
+    @State private var isFollowing: Bool?
+    @State private var isBusy = false
+
+    var body: some View {
+        Group {
+            if isFollowing ?? organization.isFollowed ?? false {
+                Menu("Following") {
+                    Button("Unfollow @\(organization.handle)") { toggle(to: false) }
+                }
+                .menuStyle(.button)
+                .buttonStyle(DSButtonStyle(kind: .outline))
+                .menuIndicator(.hidden)
+            } else {
+                Button("Follow") { toggle(to: true) }
+                    .buttonStyle(.dsPrimary)
+            }
+        }
+        .fixedSize()
+        .disabled(isBusy)
+    }
+
+    private func toggle(to value: Bool) {
+        isBusy = true
+
+        Task {
+            if await workspace.setFollowing(value, organization: organization) { isFollowing = value }
+            isBusy = false
+        }
+    }
+}
+
+/// An organization in a Following list: its picture, name, handle, one line of bio, and Follow.
+struct OrganizationRow: View {
+    @Environment(\.workspaceActions) private var actions
+
+    let organization: Organization
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: DS.Spacing.m) {
+            Button { actions?.openProfile(organization.handle) } label: {
+                HStack(spacing: DS.Spacing.m) {
+                    OrganizationAvatar(organization: organization, size: DS.Metrics.commitAvatar)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: DS.Spacing.xs) {
+                            Text(organization.name)
+                                .font(DS.Fonts.commitAuthor)
+                                .foregroundStyle(DS.Colors.ink)
+                            Text("@\(organization.handle)")
+                                .font(DS.Fonts.monoHandle)
+                                .foregroundStyle(DS.Colors.inkMuted)
+                            StatusLabel(text: "organization")
+                        }
+                        .lineLimit(1)
+                        if let bio = organization.bio, !bio.isEmpty {
+                            Text(bio)
+                                .font(DS.Fonts.body)
+                                .foregroundStyle(DS.Colors.inkMuted)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: DS.Spacing.m)
+
+            OrganizationFollowButton(organization: organization)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, DS.Metrics.commitGutter)
+        .background(isHovered ? DS.Colors.wash : .clear)
+        .onHover { isHovered = $0 }
+        .overlay(alignment: .bottom) { DS.Colors.hairline.frame(height: 1).padding(.leading, DS.Metrics.commitGutter) }
+    }
+}
+
+extension Organization {
+    func with(isFollowed: Bool?) -> Organization {
+        var copy = self
+        copy.isFollowed = isFollowed ?? self.isFollowed
+        return copy
     }
 }
 
@@ -516,7 +708,13 @@ struct PeopleListView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let people = followers ? store.followers : store.following {
-                    if people.isEmpty {
+                    let organizations = followers ? [] : store.followedOrganizations ?? []
+
+                    ForEach(organizations) { organization in
+                        OrganizationRow(organization: organization)
+                    }
+
+                    if people.isEmpty, organizations.isEmpty {
                         EmptyState(fatal: followers ? "fatal: no followers yet" : "fatal: not following anyone", message: followers ? "Nobody follows @\(handle) yet." : "@\(handle) doesn't follow anyone yet.")
                             .frame(maxWidth: .infinity)
                             .padding(.top, DS.Spacing.xxl)

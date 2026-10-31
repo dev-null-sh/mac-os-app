@@ -59,7 +59,7 @@ enum MessageText {
             switch segment.type {
             case "block":
                 flush()
-                blocks.append(.code(language: segment.language, code: plain(fromHTML: segment.html ?? "")))
+                blocks.append(.code(language: segment.filename ?? segment.language, code: plain(fromHTML: segment.html ?? "")))
             case "code":
                 var code = AttributedString(segment.code ?? "")
                 code.font = .system(size: 13, design: .monospaced)
@@ -168,7 +168,7 @@ enum MessageText {
     /// One line for the inbox and reply ghosts.
     static func preview(_ message: Message, members: [User], me: String?) -> String {
         if message.isEvent {
-            return eventText(message, me: me)
+            return eventText(message, me: me, partner: members.first { $0.id == message.userId })
         }
 
         if let voice = message.voice {
@@ -187,13 +187,13 @@ enum MessageText {
     }
 
     /// What a logged org change or ping says, from the reader's point of view, worded as the web words it.
-    static func eventText(_ message: Message, me: String?) -> String {
+    static func eventText(_ message: Message, me: String?, partner: User? = nil) -> String {
         func handle(_ user: User?) -> String {
             guard let user else { return "someone" }
             return user.id == me ? "you" : "@" + user.handle
         }
 
-        let actor = handle(message.user)
+        let actor = message.userId == me && me != nil ? "you" : handle(message.user ?? partner)
         let subject = handle(message.subject)
         let body = message.body ?? ""
         let text: String
@@ -207,6 +207,12 @@ enum MessageText {
         case "promoted": text = "\(actor) made \(subject) a maintainer"
         case "demoted": text = "\(actor) made \(subject) a contributor"
         case "inherited": text = "\(actor) inherited maintainer"
+        case "call_started": text = "\(actor) started a call"
+        case "call_answered": text = "\(actor) answered the call"
+        case "call_cancelled": text = "\(actor) cancelled the call"
+        case "call_declined": text = "\(actor) declined the call"
+        case "call_failed": text = "\(actor) couldn't answer the call"
+        case "call_missed": text = message.userId == me ? "your call wasn't answered" : "missed call from \(actor)"
         // Direct threads leave the author out: there, it can only be the partner.
         case "ping": text = message.userId == me ? "you sent a ping" : message.user == nil ? "you got a ping" : "\(actor) sent a ping"
         default: text = body

@@ -54,6 +54,8 @@ struct ChatView: View {
                 AccessBanner(thread: thread, notice: notice)
             }
 
+            CallConsole(thread: thread)
+
             if thread.canPush || !thread.isLoaded {
                 Composer(thread: thread)
             }

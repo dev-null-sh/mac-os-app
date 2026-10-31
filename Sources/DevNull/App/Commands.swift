@@ -10,6 +10,7 @@ enum CommitCommand: String {
     case openPage
     case openWindow
     case copyLink
+    case share
     case pastel
     case translate
     case pin
@@ -42,16 +43,20 @@ enum CommitCommand: String {
             actions?.openCommitWindow(id)
         case .copyLink:
             workspace.copyLink(id)
+        case .share:
+            guard canShare(commit, workspace: workspace) else { return }
+            NotificationCenter.default.post(name: .shareCommit, object: id)
         case .pastel:
             workspace.givePastel(id)
         case .translate:
+            guard !isOwn else { return }
             workspace.translate(id)
         case .pin:
             guard isOwn else { return }
             workspace.setPinned(commit.isPinned != true, id)
         case .report:
             guard !isOwn else { return }
-            Confirmations.report(commit) { reason, details in workspace.report(id, reason: reason, details: details) }
+            NotificationCenter.default.post(name: .reportCommit, object: id)
         case .delete:
             guard isOwn else { return }
             if Confirmations.confirm("Delete this commit?", "Commits are never edited. You can undo for 30 seconds, then it's gone.", action: "Delete") {
@@ -75,6 +80,15 @@ extension Notification.Name {
     static let findInList = Notification.Name("devnull.findInList")
     static let focusComposer = Notification.Name("devnull.focusComposer")
     static let reloadDestination = Notification.Name("devnull.reloadDestination")
+    static let shareCommit = Notification.Name("devnull.shareCommit")
+    static let reportCommit = Notification.Name("devnull.reportCommit")
+}
+
+extension CommitCommand {
+    /// An approved commit can be sent to someone in Remotes, as a link, by anyone who has remotes.
+    @MainActor static func canShare(_ commit: Commit, workspace: Workspace) -> Bool {
+        commit.status == .approved && workspace.session.user?.remotes != nil
+    }
 }
 
 /// The confirmations that guard destruction, as native alerts.
@@ -88,29 +102,6 @@ enum Confirmations {
         alert.addButton(withTitle: "Cancel")
 
         return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    /// Report…: the web's reasons in a popup, with optional details.
-    static func report(_ commit: Commit, send: (String, String) -> Void) {
-        let reasons: [(String, String)] = [("spam", "Spam or misleading links"), ("harassment", "Harassment or hate"), ("unsafe", "Harmful or private information"), ("other", "Something else")]
-        let alert = NSAlert()
-        alert.messageText = "Report \(commit.hash)?"
-        alert.informativeText = "A moderator reviews it. The author isn't told who reported it."
-
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 280, height: 26))
-        popup.addItems(withTitles: reasons.map(\.1))
-        let details = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        details.placeholderString = "Details (optional)"
-        let stack = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 58))
-        stack.addSubview(popup)
-        stack.addSubview(details)
-        alert.accessoryView = stack
-        alert.addButton(withTitle: "Report…".replacingOccurrences(of: "…", with: ""))
-        alert.addButton(withTitle: "Cancel")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            send(reasons[popup.indexOfSelectedItem].0, String(details.stringValue.prefix(500)))
-        }
     }
 }
 
@@ -272,6 +263,8 @@ struct AppCommands: Commands {
             commitButton("Show Replies", .showReplies)
             commitButton("Open Commit Page", .openPage, key: .return, modifiers: [.command, .shift])
             commitButton("Copy Link", .copyLink)
+            commitButton("Send in Remotes…", .share)
+                .disabled(!(focusedCommit.flatMap { commit in session.workspace.map { CommitCommand.canShare(commit, workspace: $0) } } ?? false))
 
             Divider()
 
@@ -279,6 +272,7 @@ struct AppCommands: Commands {
                 commitButton("Give a Pastel", .pastel)
             }
             commitButton("Translate", .translate)
+                .disabled(isOwnFocused)
             commitButton(focusedCommit?.isPinned == true ? "Unpin from Profile" : "Pin to Profile", .pin)
                 .disabled(!isOwnFocused || focusedCommit?.parentId != nil)
             commitButton("Report…", .report)

@@ -197,6 +197,9 @@ struct UserPreview: View {
                     Text("@\(user.handle)")
                         .font(DS.Fonts.monoHandle)
                         .foregroundStyle(DS.Colors.inkMuted)
+                    if let stream = (profile?.user ?? user).liveStream {
+                        LiveBadge(stream: stream)
+                    }
                     if profile?.followsYou ?? user.followsYou ?? false {
                         StatusLabel(text: "Follows you")
                     }
@@ -204,7 +207,7 @@ struct UserPreview: View {
             }
 
             if let bio = profile?.user.bio ?? user.bio, !bio.isEmpty {
-                Text(CommitText.prose(bio, size: 13))
+                Text(CommitText.prose(bio, size: 13, profiles: profile?.bioProfiles))
                     .font(DS.Fonts.body)
                     .foregroundStyle(DS.Colors.ink)
                     .lineLimit(3)

@@ -17,6 +17,8 @@ struct WorkspaceView: View {
     @State private var paneOverlays = false
     @State private var showsNewRemote = false
     @State private var showsNewOrg = false
+    @State private var sharing: CommitSheetItem?
+    @State private var reporting: CommitSheetItem?
     @State private var showsSwitcher = false
     @State private var toolbarSearch = ""
     @State private var toolbarSearchFocused = false
@@ -57,6 +59,20 @@ struct WorkspaceView: View {
             PeoplePicker(mode: .remote) { users, _, _ in
                 if let user = users.first { navigation.select(.remote(.direct(user))) }
             }
+        }
+        .sheet(item: $sharing) { shared in
+            PeoplePicker(mode: .share) { users, _, _ in
+                if let user = users.first { share(shared.id, with: user) }
+            }
+        }
+        .sheet(item: $reporting) { reported in
+            if let commit = workspace.existingBox(reported.id)?.commit { ReportSheet(commit: commit) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .reportCommit)) { note in
+            if window.isFrontmost, let id = note.object as? String { reporting = CommitSheetItem(id: id) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .shareCommit)) { note in
+            if window.isFrontmost, let id = note.object as? String { sharing = CommitSheetItem(id: id) }
         }
         .sheet(isPresented: $showsNewOrg) {
             PeoplePicker(mode: .newOrg) { users, name, _ in
@@ -106,6 +122,7 @@ struct WorkspaceView: View {
             CenterView()
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) { ToastView() }
+                .overlay(alignment: .top) { CallBar() }
 
             if !paneOverlays, navigation.isPaneVisible, navigation.pane != nil {
                 DS.Colors.hairline.frame(width: 1)
@@ -223,7 +240,7 @@ struct WorkspaceView: View {
     }
 
     private func openProfile(_ handle: String) {
-        if handle == session.user?.handle, navigation.route == nil {
+        if handle.caseInsensitiveCompare(session.user?.handle ?? "") == .orderedSame, navigation.route == nil {
             navigation.select(.profile)
         } else {
             navigation.push(.profile(handle))
@@ -249,6 +266,26 @@ struct WorkspaceView: View {
         if let id = AppDelegate.pendingConversation {
             AppDelegate.pendingConversation = nil
             inbox.open(conversationId: id)
+        }
+    }
+
+    /// Asks before sending, as the web does, then pushes the commit's link to them and opens the remote.
+    private func share(_ id: String, with user: User) {
+        guard let commit = workspace.existingBox(id)?.commit else { return }
+
+        // The picker's sheet closes first, so the confirmation isn't stacked on it.
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Send commit to @\(user.handle)?"
+            alert.informativeText = "Send a link to this commit in Remotes."
+            alert.addButton(withTitle: "Send")
+            alert.addButton(withTitle: "Cancel")
+
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+            let reference = ThreadReference.direct(user)
+            inbox.thread(for: reference).send(commit.webURL.absoluteString)
+            navigation.select(.remote(reference))
         }
     }
 
@@ -556,4 +593,9 @@ struct Kbd: View {
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous).strokeBorder(DS.Colors.rail))
             .fixedSize()
     }
+}
+
+/// The commit a sheet acts on: sending its link in Remotes, or reporting it.
+struct CommitSheetItem: Identifiable {
+    let id: String
 }

@@ -404,7 +404,12 @@ struct NotificationRow: View {
         names.font = DS.Fonts.body.weight(.semibold)
 
         let others = max(0, (notification.actorsCount ?? actors.count) - 1)
-        if others > 0 {
+        // Two people are both named; "and N others" is kept for three or more.
+        if others == 1, actors.count > 1, actors[1].id != actors[0].id {
+            var second = AttributedString(actors[1].displayName)
+            second.font = DS.Fonts.body.weight(.semibold)
+            names += AttributedString(" and ") + second
+        } else if others > 0 {
             var rest = AttributedString(" and ")
             var count = AttributedString("\(others) other\(others == 1 ? "" : "s")")
             count.font = DS.Fonts.body.weight(.semibold)
@@ -418,6 +423,7 @@ struct NotificationRow: View {
         case .mentioned: " mentioned you"
         case .quoted: " quoted your commit"
         case .starred: " starred your commit"
+        case .firstCommit: " made their first commit"
         case .approved: "Your commit was approved"
         case .rejected: "Your commit was not approved"
         case .leveledUp: "You leveled up"
@@ -433,7 +439,7 @@ struct NotificationRow: View {
 
     private func open() {
         switch notification.type {
-        case .replied, .quoted, .mentioned:
+        case .replied, .quoted, .mentioned, .firstCommit:
             if let commit = notification.commit {
                 workspace.box(commit)
                 navigation.openThread(commit.id)

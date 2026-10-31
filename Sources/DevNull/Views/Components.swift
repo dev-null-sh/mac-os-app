@@ -143,7 +143,12 @@ struct OrgAvatar: View {
 /// The lane colors the web draws people in, for names in orgs and avatars without a picture.
 enum LaneColor {
     static func of(_ user: User?) -> Color {
-        switch user?.lane {
+        of(lane: user?.lane)
+    }
+
+    /// A lane's color, or the primary blue for none, as an organization without a chosen color shows.
+    static func of(lane: Lane?) -> Color {
+        switch lane {
         case let .custom(hex):
             return Color(nsColor: NSColor(hex: Int(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0x3B6FE0))
         case let .palette(index):

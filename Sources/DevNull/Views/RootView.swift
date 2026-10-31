@@ -33,10 +33,11 @@ struct SignedIn<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        if session.phase == .signedIn, let inbox = session.inbox, let workspace = session.workspace {
+        if session.phase == .signedIn, let inbox = session.inbox, let workspace = session.workspace, let calls = session.calls {
             content()
                 .environment(inbox)
                 .environment(workspace)
+                .environment(calls)
                 .tint(DS.Colors.primaryFill)
         } else if session.phase == .loading {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)

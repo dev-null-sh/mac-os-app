@@ -69,6 +69,8 @@ struct WorkspaceSidebar: View {
                     }
                 }
 
+                LiveNowSection()
+
                 Section(isExpanded: $youExpanded) {
                     SidebarRow(item: .notifications, isSelected: navigation.item == .notifications, isUnread: workspace.notifications.unreadCount > 0) {
                         Image(systemName: "bell")

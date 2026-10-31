@@ -43,6 +43,9 @@ final class Workspace {
     let drafts = DraftStore()
     let toasts = ToastCenter()
     private(set) var settings: AccountSettings?
+    /// The people the user follows who are streaming, for the sidebar's Live now.
+    private(set) var liveFollowing: [User] = []
+    @ObservationIgnored private var livePolling: Task<Void, Never>?
 
     /// Whether the last poll of anything failed, which the sidebar footer says until one succeeds.
     var isOffline = false
@@ -69,9 +72,18 @@ final class Workspace {
         notifications.startPolling()
 
         Task { await loadSettings() }
+
+        // Streams start and end on their own schedule, so a couple of minutes behind is close enough.
+        livePolling = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.loadLiveFollowing()
+                try? await Task.sleep(for: .seconds(120))
+            }
+        }
     }
 
     func stop() {
+        livePolling?.cancel()
         logs.values.forEach { $0.stop() }
         notifications.stop()
         scheduled.stop()
@@ -242,15 +254,18 @@ final class Workspace {
         }
     }
 
-    func report(_ id: String, reason: String, details: String) {
-        Task {
-            do {
-                try await api.perform("POST", "commits/\(id)/reports", json: ["reason": reason, "details": details.isEmpty ? NSNull() : details])
-                toasts.show("reported. Thanks, a moderator will look at it.")
-            } catch {
-                toasts.fatal(error)
-            }
+    /// Reports a commit, with the images that show what's wrong, as multipart when there are any.
+    func report(_ id: String, reason: String, details: String, images: [Attachment]) async throws {
+        var json: [String: Any] = ["reason": reason, "details": details.isEmpty ? NSNull() : details]
+
+        if images.isEmpty {
+            try await api.perform("POST", "commits/\(id)/reports", json: json)
+        } else {
+            json["image_descriptions"] = images.map(\.description)
+            let _: Empty = try await api.sendMultipart("POST", "commits/\(id)/reports", json: json, field: "images", files: images.map { Upload(data: $0.data, filename: $0.filename, mimeType: $0.mimeType) })
         }
+
+        toasts.show("reported. Thanks, a moderator will look at it.")
     }
 
     /// Deletes the user's commit: the row prints `rm <hash>` and collapses, and the toast offers Undo for the server's
@@ -298,6 +313,39 @@ final class Workspace {
             toasts.fatal(error)
             return false
         }
+    }
+
+    func setFollowing(_ following: Bool, organization: Organization) async -> Bool {
+        do {
+            try await api.perform(following ? "POST" : "DELETE", "organizations/\(organization.handle)/follow")
+
+            if let store = profileStores[organization.handle.lowercased()], var page = store.organization, page.isFollowing != following {
+                page.isFollowing = following
+                page.data.followersCount = max(0, (page.data.followersCount ?? 0) + (following ? 1 : -1))
+                store.organization = page
+            }
+
+            return true
+        } catch {
+            toasts.fatal(error)
+            return false
+        }
+    }
+
+    func loadLiveFollowing() async {
+        if let page: Page<User> = try? await api.get("me/live-following") { liveFollowing = page.data }
+    }
+
+    /// Goes live on a stream for some hours, or ends the stream with nil, as the web's profile button does.
+    func setLive(url: String?, hours: Int = 2) async throws {
+        let response: DataEnvelope<CurrentUser> = if let url {
+            try await api.send("PUT", "me/live", json: ["url": url, "hours": hours])
+        } else {
+            try await api.send("DELETE", "me/live", json: nil)
+        }
+
+        session.update(user: response.data)
+        await profile(response.data.handle).reload()
     }
 
     func setMuted(_ muted: Bool, _ user: User) {
@@ -548,6 +596,8 @@ final class ThreadStore {
     private(set) var ancestors: [String] = []
     private(set) var replies: [String] = []
     private(set) var related: [String] = []
+    /// Who a reply to this commit can go to, the author first, never the user, as the web's "Replying to" lists them.
+    private(set) var participants: [User] = []
     private(set) var isLoading = false
     private(set) var hasLoaded = false
     private(set) var hasMoreReplies = false
@@ -586,6 +636,8 @@ final class ThreadStore {
 
             workspace.box(loaded.data)
             ancestors = workspace.ingest(loaded.ancestors ?? [])
+            var seen = Set([workspace.session.user?.id ?? ""])
+            participants = ([loaded.data.author].compactMap { $0 } + (loaded.replyParticipants ?? [])).filter { seen.insert($0.id).inserted }
             replies = workspace.ingest(loadedReplies.data)
             cursor = loadedReplies.meta?.nextCursor
             hasMoreReplies = cursor != nil
@@ -643,8 +695,12 @@ final class ProfileStore {
     @ObservationIgnored unowned let workspace: Workspace
 
     var profile: Profile?
-    /// Set instead of the profile when the handle is a GitHub organization's, which has a page but no commits.
-    private(set) var organization: Organization?
+    /// Set instead of the profile when the handle is a GitHub organization's, whose page lists the commits mentioning it.
+    var organization: OrganizationPage?
+    private(set) var mentions: [String]?
+    private(set) var mentionsCursor: String?
+    /// The organizations someone follows, listed above the people on their Following list, as on the web.
+    private(set) var followedOrganizations: [Organization]?
     private(set) var commits: [Tab: [String]] = [:]
     private(set) var cursors: [Tab: String] = [:]
     private(set) var isLoading = false
@@ -675,7 +731,8 @@ final class ProfileStore {
         } catch let error as APIError where error.status == 404 {
             // Organizations share the "@handle" pages with users, so a handle no user has may be one.
             do {
-                organization = try await workspace.api.get("organizations/\(handle)", as: DataEnvelope<Organization>.self).data
+                organization = try await workspace.api.get("organizations/\(handle)")
+                await loadMentions()
             } catch let error as APIError where error.status == 404 {
                 self.error = "No one on /dev/null goes by @\(handle)."
             } catch {
@@ -712,9 +769,38 @@ final class ProfileStore {
     }
 
     func loadPeople(followers: Bool) async {
+        if !followers {
+            followedOrganizations = (try? await workspace.api.get("users/\(handle)/following/organizations", as: Page<Organization>.self))?.data ?? followedOrganizations
+        }
+
         guard let page: Page<User> = try? await workspace.api.get("users/\(handle)/\(followers ? "followers" : "following")") else { return }
 
         if followers { self.followers = page.data } else { following = page.data }
+    }
+
+    /// The commits mentioning the organization, 20 a page, as its Mentions tab on the web.
+    func loadMentions(more: Bool = false) async {
+        if more, mentionsCursor == nil { return }
+
+        guard let page: Page<Commit> = try? await workspace.api.get("organizations/\(handle)/mentions", query: ["cursor": more ? mentionsCursor : nil]) else {
+            if mentions == nil { mentions = [] }
+            return
+        }
+
+        let ids = workspace.ingest(page.data)
+        mentions = more ? (mentions ?? []) + ids : ids
+        mentionsCursor = page.meta?.nextCursor
+    }
+
+    /// Asks GitHub, through /dev/null, whether the user belongs to the organization, making them its first admin.
+    func claim() async {
+        do {
+            try await workspace.api.perform("POST", "organizations/\(handle)/claim")
+            organization = try await workspace.api.get("organizations/\(handle)")
+            workspace.toasts.show("You claimed @\(handle)")
+        } catch {
+            presentAlert(error.localizedDescription)
+        }
     }
 }
 

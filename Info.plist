@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.2</string>
+	<string>0.4.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -41,10 +41,12 @@
 	<string>public.app-category.social-networking</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>/dev/null uses your camera only while you turn it on in a call.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>/dev/null uses your microphone only while you record a voice note.</string>
+	<string>/dev/null uses your microphone only while you record a voice note or are on a call.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticTermination</key>

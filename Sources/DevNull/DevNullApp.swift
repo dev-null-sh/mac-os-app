@@ -81,6 +81,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ], intentIdentifiers: [])])
     }
 
+    /// Quitting mid-call hangs up first, so the other side isn't left ringing or waiting, but never for more than 2 s.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let calls = MainActor.assumeIsolated({ CallCenter.current }), MainActor.assumeIsolated({ calls.isOnCall }) else { return .terminateNow }
+
+        Task { @MainActor in
+            var replied = false
+            let reply = {
+                guard !replied else { return }
+                replied = true
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                reply()
+            }
+
+            await calls.hangUpBeforeQuitting()
+            reply()
+        }
+
+        return .terminateLater
+    }
+
     /// Clicking the Dock icon brings the window back after it was closed: SwiftUI doesn't open it again by itself, and the
     /// New Window item it would otherwise use is replaced by New Remote.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

@@ -312,7 +312,9 @@ final class Inbox {
                   id > seen,
                   conversation.ahead > 0,
                   !conversation.isMuted,
-                  !isReading(conversation)
+                  !isReading(conversation),
+                  // A call rings on its own; the lines it leaves in the history aren't messages to alert about.
+                  conversation.lastMessage?.event?.hasPrefix("call_") != true
             else { continue }
 
             let content = UNMutableNotificationContent()

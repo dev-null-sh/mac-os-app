@@ -24,8 +24,10 @@ final class Session {
         didSet {
             inbox?.stop()
             workspace?.stop()
+            calls?.stop()
             inbox = api.map { Inbox(session: self, api: $0) }
             workspace = api.map { Workspace(session: self, api: $0) }
+            calls = api.map { [inbox] api in CallCenter(api: api, inbox: inbox, me: { [weak self] in self?.user }) }
         }
     }
 
@@ -33,6 +35,8 @@ final class Session {
     private(set) var inbox: Inbox?
     /// The logs, threads, notifications, profiles, queue, search and drafts, shared by every window like the inbox.
     private(set) var workspace: Workspace?
+    /// Calls ring every window, so there is one call center for the app, like the inbox.
+    private(set) var calls: CallCenter?
     var error: String?
 
     private var pending: (state: String, verifier: String)?

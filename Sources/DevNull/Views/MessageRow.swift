@@ -106,7 +106,7 @@ struct MessageRow: View {
 
     var body: some View {
         if message.isEvent {
-            ServicePill(text: MessageText.eventText(message, me: session.user?.id))
+            ServicePill(text: MessageText.eventText(message, me: session.user?.id, partner: thread.partner))
                 .multilineTextAlignment(.center)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 40)

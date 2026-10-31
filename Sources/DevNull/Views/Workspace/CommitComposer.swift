@@ -30,6 +30,10 @@ struct CommitComposer: View {
     @State private var organizations: [Organization] = []
     @State private var issue: IssueSuggestion?
     @State private var showsPreview = false
+    @State private var showsEmoji = false
+    @State private var showsRecipients = false
+    /// The participants unticked under "Replying to"; everyone else the thread addresses gets the reply.
+    @State private var excludedRecipients: Set<String> = []
     @State private var preview: Commit?
     @State private var showsSchedule = false
     @State private var scheduleDate = Date.now.addingTimeInterval(3600)
@@ -87,8 +91,21 @@ struct CommitComposer: View {
 
     // MARK: Layout
 
+    /// The parent's author and the people its thread addresses, when there's anyone besides the author to choose.
+    private var participants: [User] {
+        guard let parentId else { return [] }
+
+        let participants = workspace.thread(parentId).participants
+
+        return participants.count > 1 ? participants : []
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            if !participants.isEmpty {
+                recipients
+            }
+
             ZStack(alignment: .topLeading) {
                 if showsPreview {
                     previewBox
@@ -172,6 +189,60 @@ struct CommitComposer: View {
         #endif
     }
 
+    private var recipients: some View {
+        let selected = participants.filter { !excludedRecipients.contains($0.id) }
+        let names = selected.enumerated().map { index, user in
+            (index == 0 ? "" : index == selected.count - 1 ? " and " : ", ") + "@" + user.handle
+        }.joined()
+
+        return Button { showsRecipients = true } label: {
+            (Text("Replying to ").foregroundStyle(DS.Colors.inkMuted) + Text(names).foregroundStyle(DS.Colors.primary))
+                .font(DS.Fonts.caption)
+                .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .help("Choose who to include")
+        .popover(isPresented: $showsRecipients, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                Text("Replying to")
+                    .font(DS.Fonts.section)
+                Text("Choose who to include. The commit author stays selected. Anyone you mention in your reply will also be notified.")
+                    .font(DS.Fonts.caption)
+                    .foregroundStyle(DS.Colors.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(Array(participants.enumerated()), id: \.element.id) { index, user in
+                    Toggle(isOn: Binding(
+                        get: { !excludedRecipients.contains(user.id) },
+                        set: { included in if included { excludedRecipients.remove(user.id) } else { excludedRecipients.insert(user.id) } }
+                    )) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("@\(user.handle)")
+                                .font(DS.Fonts.bodyMedium)
+                            if index == 0 {
+                                Text("Commit author")
+                                    .font(DS.Fonts.caption)
+                                    .foregroundStyle(DS.Colors.inkMuted)
+                            }
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(index == 0)
+                    .accessibilityLabel("Include @\(user.handle)")
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Done") { showsRecipients = false }
+                        .buttonStyle(.dsPrimary)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(DS.Spacing.l)
+            .frame(width: 320)
+        }
+    }
+
     private var toolRow: some View {
         HStack(spacing: DS.Spacing.xs) {
             if isRestored, !draft.isEmpty {
@@ -186,6 +257,10 @@ struct CommitComposer: View {
             }
 
             tool("photo", help: "Add Image", label: "Add image", disabled: draft.images.count >= Self.maxImages || draft.pollOptions != nil, action: pickImages)
+            tool("face.smiling", help: "Emoji", label: "Emoji", disabled: showsPreview, isOn: showsEmoji) { showsEmoji.toggle() }
+                .popover(isPresented: $showsEmoji, arrowEdge: .bottom) {
+                    EmojiPicker(mode: .insert) { emoji in handle.insert(emoji) }
+                }
             if parentId == nil {
                 tool("list.bullet", help: draft.pollOptions == nil ? "Add Poll" : "Remove Poll", label: draft.pollOptions == nil ? "Add poll" : "Remove poll", disabled: !draft.images.isEmpty || draft.quotedCommitId != nil, isOn: draft.pollOptions != nil) {
                     draft.pollOptions = draft.pollOptions == nil ? ["", ""] : nil
@@ -576,7 +651,12 @@ struct CommitComposer: View {
 
             if !body.isEmpty { json["body"] = body }
             if let quoted = submitted.quotedCommitId { json["quoted_commit_id"] = quoted }
-            if let parentId { json["parent_id"] = parentId }
+            if let parentId {
+                json["parent_id"] = parentId
+                if !participants.isEmpty {
+                    json["reply_recipients"] = participants.dropFirst().map(\.id).filter { !excludedRecipients.contains($0) }
+                }
+            }
             if let options = submitted.pollOptions {
                 json["poll"] = ["options": options.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, "duration": submitted.pollDuration]
             }

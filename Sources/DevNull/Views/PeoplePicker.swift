@@ -7,14 +7,17 @@ struct PeoplePicker: View {
         case remote
         case newOrg
         case addToOrg(id: String)
+        /// Sending a commit's link to one person, as the web's "Send commit in Remotes".
+        case share
 
-        var isMultiple: Bool { self != .remote }
+        var isMultiple: Bool { self != .remote && self != .share }
 
         var title: String {
             switch self {
             case .remote: "New Remote"
             case .newOrg: "New Org"
             case .addToOrg: "Add People"
+            case .share: "Send Commit in Remotes"
             }
         }
     }
@@ -168,6 +171,7 @@ struct PeoplePicker: View {
 
         let query: [String: String?] = switch mode {
         case .remote: ["q": search]
+        case .share: ["q": search, "for": "share"]
         case .newOrg: ["q": search, "for": "org"]
         case let .addToOrg(id): ["q": search, "org": id]
         }

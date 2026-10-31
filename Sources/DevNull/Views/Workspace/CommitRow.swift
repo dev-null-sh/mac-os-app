@@ -237,6 +237,10 @@ struct CommitRow: View {
                 .onHover { hovering in highlight?.authorId = hovering ? commit.author?.id : nil }
                 .layoutPriority(-1)
 
+                if let stream = commit.author?.liveStream {
+                    LiveBadge(stream: stream)
+                }
+
                 Text("·")
                     .font(DS.Fonts.monoCaption)
                     .foregroundStyle(DS.Colors.inkFaint)
@@ -379,15 +383,15 @@ struct CommitActionRow: View {
             }
             .buttonStyle(.plain)
             .disabled(isOwn)
-            .help(isOwn ? "You can't star your own commit" : commit.isStarred ? "Unstar (s)" : "Star (s)")
+            .help(isOwn ? "You can't star your own commit" : commit.isStarred ? "Unstar" : "Star")
             .accessibilityLabel(commit.isStarred ? "Unstar, \(commit.stars) stars" : "Star, \(commit.stars) stars")
 
-            iconButton("bubble.left", help: "Reply (r)", label: "Reply") {
+            iconButton("bubble.left", help: "Reply", label: "Reply") {
                 navigation.openThread(box.id, focusComposer: true)
             }
 
             if full {
-                iconButton("quote.bubble", help: "Quote (q)", label: "Quote") {
+                iconButton("quote.bubble", help: "Quote", label: "Quote") {
                     CommitCommand.perform(.quote, on: box.id, workspace: workspace, navigation: navigation, actions: actions, openWindow: openWindow)
                 }
 
@@ -411,8 +415,10 @@ struct CommitActionRow: View {
                     .accessibilityLabel("Give a pastel, \(commit.pasteisCount ?? 0) given")
                 }
 
-                iconButton("character.bubble", help: "Translate", label: box.translation == nil ? "Translate" : "Show original") {
-                    workspace.translate(box.id)
+                if !isOwn {
+                    iconButton("character.bubble", help: "Translate", label: box.translation == nil ? "Translate" : "Show original") {
+                        workspace.translate(box.id)
+                    }
                 }
             }
 
@@ -527,9 +533,12 @@ struct CommitMenuItems: View {
         Divider()
 
         button("Copy Link", .copyLink)
+        if CommitCommand.canShare(commit, workspace: workspace) {
+            button("Send in Remotes…", .share)
+        }
         button("Open Commit Page", .openPage)
         button("Open in New Window", .openWindow)
-        if !commit.text.isEmpty {
+        if !commit.text.isEmpty, !isOwn {
             button(box.translation == nil ? "Translate" : "Show Original", .translate)
         }
 
