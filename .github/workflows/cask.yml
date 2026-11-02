@@ -1,0 +1,21 @@
+name: Cask
+
+on:
+  push:
+    branches: [production]
+    paths: [Casks/**, .github/workflows/cask.yml]
+  pull_request:
+    paths: [Casks/**, .github/workflows/cask.yml]
+
+jobs:
+  audit:
+    runs-on: macos-15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew update
+      - run: brew tap dev-null-sh/devnull "$GITHUB_WORKSPACE"
+      - run: brew trust dev-null-sh/devnull
+      - run: brew style --cask dev-null-sh/devnull/devnull
+      - run: brew audit --cask --strict --online dev-null-sh/devnull/devnull
